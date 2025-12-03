@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>RAU-01 — AI</title>
+
+<script src="https://cdn.tailwindcss.com"></script>
+
+<style>
+body {
+  background: #0d1117; /* GitHub dark style */
+  color: #e5e7eb;
+}
+
+/* soft glass */
+.glass {
+  background: rgba(17,24,39,0.8); /* dark gray */
+  backdrop-filter: blur(10px);
+  border: 1px solid rgba(255,255,255,0.04);
+}
+
+.chat-bubble-user {
+  background: #1f2937;
+  border: 1px solid rgba(255,255,255,0.05);
+}
+
+.chat-bubble-ai {
+  background: #020617;
+  border: 1px solid rgba(255,255,255,0.05);
+}
+
+textarea {
+  background: #020617 !important;
+}
+
+/* Scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+}
+::-webkit-scrollbar-thumb {
+  background: #374151;
+  border-radius: 10px;
+}
+
+</style>
+</head>
+
+<body class="h-screen flex text-white">
+
+<!-- Sidebar -->
+<div class="w-20 md:w-64 glass p-4 flex flex-col items-center md:items-start">
+  <h1 class="text-2xl font-bold mb-6 text-blue-400 hidden md:block">
+     RAU-01
+  </h1>
+
+  <button onclick="clearChat()" class="bg-red-500/20 hover:bg-red-600/30 w-full py-2 rounded-lg text-sm mt-auto">
+    Clear Chat
+  </button>
+</div>
+
+
+<!-- Main Area -->
+<div class="flex-1 flex flex-col">
+
+  <!-- Header -->
+  <div class="glass p-4 border-b border-white/10">
+    <h2 class="text-xl font-semibold">RAU-01 — AI Assistant</h2>
+    <p class="text-sm text-white/50">Grounded. Smart. Precise.</p>
+  </div>
+
+  <!-- Chat Area -->
+  <div id="chatArea" class="flex-1 overflow-y-auto p-6 space-y-6"></div>
+
+  <!-- Input -->
+  <div class="glass p-4 flex gap-4">
+    <textarea id="promptInput" rows="1"
+      class="flex-1 bg-transparent resize-none outline-none p-3 rounded-lg border border-white/20 text-white"
+      placeholder="Send message to RAU-01..."></textarea>
+
+    <button onclick="getAIResponse()" id="submitBtn"
+      class="bg-blue-600 hover:bg-blue-700 px-6 py-3 rounded-xl font-bold">
+      Send
+    </button>
+  </div>
+
+</div>
+
+<script>
+const API_ENDPOINT = 'http://127.0.0.1:5000/ask_ai';
+
+const promptInput = document.getElementById('promptInput');
+const submitBtn = document.getElementById('submitBtn');
+const chatArea = document.getElementById('chatArea');
+
+function saveChat() {
+  localStorage.setItem("rau_chat", chatArea.innerHTML);
+}
+
+function loadChat() {
+  const saved = localStorage.getItem("rau_chat");
+  if (saved) chatArea.innerHTML = saved;
+}
+
+function clearChat() {
+  chatArea.innerHTML = '';
+  localStorage.removeItem("rau_chat");
+}
+
+loadChat();
+
+promptInput.addEventListener("keydown", e => {
+  if (e.key === "Enter" && !e.shiftKey) {
+    e.preventDefault();
+    getAIResponse();
+  }
+});
+
+function addMessage(type, text) {
+  const div = document.createElement("div");
+  div.className = `p-4 rounded-xl max-w-xl ${type === "user" ? "chat-bubble-user ml-auto" : "chat-bubble-ai"}`;
+  div.innerHTML = text.replace(/\n/g, "<br>");
+  chatArea.appendChild(div);
+  chatArea.scrollTop = chatArea.scrollHeight;
+  saveChat();
+}
+
+async function getAIResponse() {
+  const prompt = promptInput.value.trim();
+  if (!prompt) return;
+
+  addMessage("user", prompt);
+  promptInput.value = "";
+
+  submitBtn.disabled = true;
+  submitBtn.textContent = "Thinking...";
+
+  try {
+    const response = await fetch(API_ENDPOINT, {
+      method: "POST",
+      headers: { "Content-Type":"application/json" },
+      body: JSON.stringify({ prompt })
+    });
+
+    const data = await response.json();
+
+    if (data.error) {
+      addMessage("ai", "⚠️ " + data.error);
+    } else {
+      addMessage("ai", data.text);
+    }
+
+  } catch (err) {
+    addMessage("ai", "⚠️ Failed to reach server.");
+  }
+
+  submitBtn.disabled = false;
+  submitBtn.textContent = "Send";
+}
+</script>
+</body>
+</html>
