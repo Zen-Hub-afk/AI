@@ -10,7 +10,7 @@ from flask_cors import CORS
 # **IMPORTANT:** Replace this with your actual Gemini API Key, 
 # or preferably, set it as an environment variable.
 # Example: export GEMINI_API_KEY='YOUR_API_KEY_HERE'
-API_KEY = os.environ.get("GEMINI_API_KEY", "AIzaSyDPGVVVoBOVgu1AqBerK_t3QVAq7Mf0-cM") 
+API_KEY = os.environ.get("GEMINI_API_KEY", "") 
 
 if not API_KEY:
     print("WARNING: GEMINI_API_KEY environment variable not found. Using empty string.")
@@ -120,4 +120,5 @@ if __name__ == '__main__':
     print("Starting Flask server...")
     print("Open index.html and ensure the GEMINI_API_KEY is set.")
     # Running on port 5000, accessible by the HTML file
+
     app.run(port=5000, debug=True)
