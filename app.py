@@ -1,125 +1,107 @@
 import os
-import requests
 import json
-import time
 from flask import Flask, request, jsonify
-from flask_cors import CORS
+from google import genai
+from flask_cors import CORS 
 
-# --- Configuration ---
+# --- Configuration and Initialization ---
+# NOTE FOR DEPLOYMENT:
+# The GEMINI_API_KEY MUST be set as an environment variable 
+# in your hosting platform (e.g., Cloud Run, Heroku, etc.).
+# This code will fail to run if the key is not set.
 
-# **IMPORTANT:** Replace this with your actual Gemini API Key, 
-# or preferably, set it as an environment variable.
-# Example: export GEMINI_API_KEY='YOUR_API_KEY_HERE'
-API_KEY = os.environ.get("GEMINI_API_KEY", "AIzaSyDPGVVVoBOVgu1AqBerK_t3QVAq7Mf0-cM") 
+try:
+    API_KEY = os.environ.get('AIzaSyDPGVVVoBOVgu1AqBerK_t3QVAq7Mf0-cM')
+    if not API_KEY:
+        # Raise an exception if the key is missing to ensure secure deployment practice.
+        # Running locally requires setting the environment variable first.
+        raise ValueError("GEMINI_API_KEY environment variable is not set. Please configure it in your deployment environment.")
+        
+    client = genai.Client(api_key=API_KEY)
+except Exception as e:
+    # Print error but allow the Flask app to start so the user can see the status page if needed
+    print(f"FATAL ERROR: Failed to initialize Gemini Client. Details: {e}")
+    client = None
 
-if not API_KEY:
-    print("WARNING: GEMINI_API_KEY environment variable not found. Using empty string.")
+# The model name we will use for text generation with Google Search grounding
+MODEL_NAME = "gemini-2.5-flash" 
 
-# Model and API Endpoint
-MODEL_NAME = "gemini-2.5-flash-preview-09-2025"
-API_URL = f"https://generativelanguage.googleapis.com/v1beta/models/{MODEL_NAME}:generateContent?key={API_KEY}"
-
-# Initialize Flask App
+# --- Flask App Setup ---
 app = Flask(__name__)
-# Enable CORS so the HTML page running on its own can talk to the server
+# Enable Cross-Origin Resource Sharing (CORS) to allow requests from any origin (e.g., your GitHub Pages URL)
 CORS(app) 
 
-# --- Helper Functions for API Call ---
-
-def get_grounded_content(prompt, max_retries=5):
-    """
-    Calls the Gemini API with Google Search Grounding enabled.
-    Implements exponential backoff for robustness.
-    """
-    # System Instruction: Define the AI's persona and rules for grounded responses
-    system_prompt = "You are a helpful, internet-connected assistant. When responding, you MUST use the provided Google Search results to ground your answer and provide citations in the final output."
-
-    # Payload construction
-    payload = {
-        "contents": [{"parts": [{"text": prompt}]}],
-        
-        # 1. CRITICAL: Enable Google Search Grounding
-        "tools": [{"google_search": {}}], 
-
-        # 2. Add System Instruction
-        "systemInstruction": {"parts": [{"text": system_prompt}]},
-    }
-
-    # Exponential Backoff implementation
-    for attempt in range(max_retries):
-        try:
-            # 3. Make the POST request to the Gemini API
-            response = requests.post(
-                API_URL, 
-                headers={'Content-Type': 'application/json'}, 
-                data=json.dumps(payload)
-            )
-            response.raise_for_status() # Raise exception for bad status codes (4xx or 5xx)
-            
-            result = response.json()
-            candidate = result.get('candidates', [{}])[0]
-            
-            # Extract generated text
-            text = candidate.get('content', {}).get('parts', [{}])[0].get('text', '')
-
-            # Extract grounding sources (citations)
-            sources = []
-            grounding_metadata = candidate.get('groundingMetadata', {})
-            attributions = grounding_metadata.get('groundingAttributions', [])
-            
-            for attr in attributions:
-                web = attr.get('web', {})
-                if web.get('uri') and web.get('title'):
-                    sources.append({
-                        'uri': web['uri'],
-                        'title': web['title']
-                    })
-
-            return text, sources
-
-        except requests.exceptions.RequestException as e:
-            # Handle connection/API errors
-            print(f"Attempt {attempt + 1} failed with error: {e}")
-            if attempt < max_retries - 1:
-                # Calculate exponential backoff delay
-                delay = 2 ** attempt
-                time.sleep(delay)
-                continue
-            else:
-                return f"Failed to connect to the Gemini API after {max_retries} attempts.", []
-
-# --- Flask Routes ---
+# System instruction to guide the model's behavior
+SYSTEM_INSTRUCTION = (
+    "You are a friendly, helpful, and highly informative AI assistant named RAU-01. "
+    "Your core function is to provide answers based on real-time information. "
+    "Always use the Google Search tool for grounded, up-to-date information, especially for current events or facts. "
+    "Be concise, clear, and encouraging. Your responses must be structured well and easy to read."
+    "you MUST use the provided Google Search results to ground your answer and provide citations in the final output. If no relevant information is found, respond accordingly. moreover, to have a type personality that
+)
 
 @app.route('/ask_ai', methods=['POST'])
 def ask_ai():
-    """
-    API endpoint that receives the user prompt and returns the AI response.
-    """
+    """Handles the chat request from the frontend and communicates with the Gemini API."""
+    
+    # Check if the client was initialized successfully
+    if not client:
+        return jsonify({'error': 'AI Service Initialization Failed. Check GEMINI_API_KEY configuration.'}), 503
+
     try:
+        # 1. Get the prompt from the JSON body
         data = request.get_json()
-        prompt = data.get('prompt')
+        if not data or 'prompt' not in data:
+            return jsonify({'error': 'Missing prompt in request'}), 400
         
-        if not prompt:
-            return jsonify({'error': 'No prompt provided'}), 400
+        user_prompt = data['prompt']
 
-        print(f"Received prompt: {prompt}")
+        # 2. Configure the API call for search grounding
+        tools = [{"google_search": {}}]
+        
+        config = genai.types.GenerateContentConfig(
+            system_instruction=SYSTEM_INSTRUCTION,
+            tools=tools,
+        )
 
-        # Call the helper function to get the grounded response
-        ai_response, sources = get_grounded_content(prompt)
-
+        # 3. Call the Gemini API
+        response = client.models.generate_content(
+            model=MODEL_NAME,
+            contents=[user_prompt],
+            config=config,
+        )
+        
+        # 4. Extract text and sources
+        generated_text = response.text
+        
+        # Extract grounding sources for citation display
+        sources = []
+        grounding_metadata = response.candidates[0].grounding_metadata
+        if grounding_metadata and grounding_metadata.grounding_attributions:
+            sources = [
+                {
+                    'uri': attr.web.uri,
+                    'title': attr.web.title,
+                }
+                for attr in grounding_metadata.grounding_attributions
+                # Only include sources with both URI and Title for clean citation display
+                if attr.web and attr.web.uri and attr.web.title
+            ]
+        
+        # 5. Return the AI response (text and sources) to the frontend
         return jsonify({
-            'text': ai_response,
+            'text': generated_text,
             'sources': sources
         })
 
     except Exception as e:
-        print(f"An internal server error occurred: {e}")
-        return jsonify({'error': 'Internal server error'}), 500
+        # General error handling for issues like API call failure
+        print(f"An unexpected error occurred during API call: {e}")
+        return jsonify({'error': f'Internal Server Error. Please try again. Details: {str(e)}'}), 500
 
 if __name__ == '__main__':
-    print("Starting Flask server...")
-    print("Open index.html and ensure the GEMINI_API_KEY is set.")
-    # Running on port 5000, accessible by the HTML file
-
-    app.run(port=5000, debug=True)
-
+    # This is for local testing. In production, the port is usually set by the hosting environment.
+    port = int(os.environ.get('PORT', 8080))
+    print(f"Starting server on port {port}")
+    # Using '0.0.0.0' allows access from outside if firewall permits, which is standard for container deployment
+    app.run(host='0.0.0.0', port=port)
